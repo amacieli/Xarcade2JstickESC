@@ -1,0 +1,9 @@
+[Unit]
+Description=Xarcade2Jstick
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/xarcade2jstick -s
+
+[Install]
+WantedBy=multi-user.target
