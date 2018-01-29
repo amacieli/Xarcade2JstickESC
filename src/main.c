@@ -125,8 +125,8 @@ int main(int argc, char* argv[]) {
 	}
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
-	signal(SIGUSR1, x2j_handle_signal_SIGUSR1);
-	signal(SIGUSR2, x2j_handle_signal_SIGUSR2);
+	signal(SIGUSR1, signal_handler);
+	signal(SIGUSR2, signal_handler);
 
 	SYSLOG(LOG_NOTICE, "Running.");
 
@@ -301,12 +301,22 @@ static void teardown() {
 }
 
 static void signal_handler(int signum) {
-	signal(signum, SIG_DFL);
-
-	printf("Received signal %d (%s), exiting.\n", signum, strsignal(signum));
-	SYSLOG(LOG_NOTICE, "Received signal %d (%s), exiting.", signum, strsignal(signum));
-	teardown();
-	exit(EXIT_SUCCESS);
+	switch(signum) {
+		case SIGUSR1:
+			mame = 0;
+			break;
+		case SIGUSR2:
+			mame=1;
+			break;
+		case SIGINT:
+		case SIGTERM:
+		default:
+			signal(signum, SIG_DFL);
+			printf("Received signal %d (%s), exiting.\n", signum, strsignal(signum));
+			SYSLOG(LOG_NOTICE, "Received signal %d (%s), exiting.", signum, strsignal(signum));
+			teardown();
+			exit(EXIT_SUCCESS);
+	}
 }
 
 /* For most X-Arade keys:
@@ -333,12 +343,3 @@ static void x2j_write_gpad(int keytopress, int gpad) {
 	uinput_gpad_sleep();
 	uinput_gpad_write(&uinp_gpads[gpad], keytopress, 0, EV_KEY);
 }
-
-static void x2j_handle_signal_SIGUSR1(int signum) {
-	mame = 0;
-}
-
-static void x2j_handle_signal_SIGUSR2(int signum) {
-	mame = 1;
-}
-
