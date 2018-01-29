@@ -19,6 +19,8 @@
 // Modifications made on 2018-01-28 by Adam Macielinski
 // Pressing 1 and 3 (or, P1 START and SELECT) together will output ESC
 // Pressing 2 and 4 (or, P2 START and SELECT) together will output ESC
+// If started with the option "-m", assumes MAME, and performs no remapping
+// other than the above.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,16 +46,24 @@
 // TODO Extract all magic numbers and collect them as defines in at a central location
 
 #define GPADSNUM 2
+#define GPAD1 0
+#define GPAD2 1
 
 UINP_KBD_DEV uinp_kbd;
 UINP_GPAD_DEV uinp_gpads[GPADSNUM];
 INP_XARC_DEV xarcdev;
 int use_syslog = 0;
+int mame = 0;
 
 #define SYSLOG(...) if (use_syslog == 1) { syslog(__VA_ARGS__); }
 
 static void teardown();
 static void signal_handler(int signum);
+static void x2j_write(int keypressed, int mappedkey, int option, int eventtype, int gpad);
+static void x2j_write_keyboard(int keytopress);
+static void x2j_write_gpad(int keytopress, int gpad);
+static void x2j_handle_signal_SIGUSR1(int signum);
+static void x2j_handle_signal_SIGUSR2(int signum);
 
 int main(int argc, char* argv[]) {
 	int result = 0;
@@ -62,7 +72,8 @@ int main(int argc, char* argv[]) {
 
 	int detach = 0;
 	int opt;
-	while ((opt = getopt(argc, argv, "+ds")) != -1) {
+
+	while ((opt = getopt(argc, argv, "+dsm")) != -1) {
 		switch (opt) {
 			case 'd':
 				detach = 1;
@@ -70,8 +81,11 @@ int main(int argc, char* argv[]) {
 			case 's':
 				use_syslog = 1;
 				break;
+			case 'm':
+				mame = 1;	// User wanted a MAME configuration
+				break;
 			default:
-				fprintf(stderr, "Usage: %s [-d] [-s]\n", argv[0]);
+				fprintf(stderr, "Usage: %s [-d] [-s] [-m]\n", argv[0]);
 				exit(EXIT_FAILURE);
 				break;
 		}
@@ -79,11 +93,16 @@ int main(int argc, char* argv[]) {
 
 	SYSLOG(LOG_NOTICE, "Starting.");
 
+	if (mame)
+		printf("[Xarcade2Joystick] Setting up for MAME.\n");
+	else
+		printf("[Xarcade2Joystick] NOT setting up for MAME.\n");
+
 	printf("[Xarcade2Joystick] Getting exclusive access: ");
 	result = input_xarcade_open(&xarcdev, INPUT_XARC_TYPE_TANKSTICK);
 	if (result != 0) {
 		if (errno == 0) {
-			printf("Not found.\n");
+			printf("Xarcade not found.\n");
 			SYSLOG(LOG_ERR, "Xarcade not found, exiting.");
 		} else {
 			printf("Failed to get exclusive access to Xarcade: %d (%s)\n", errno, strerror(errno));
@@ -106,6 +125,8 @@ int main(int argc, char* argv[]) {
 	}
 	signal(SIGINT, signal_handler);
 	signal(SIGTERM, signal_handler);
+	signal(SIGUSR1, x2j_handle_signal_SIGUSR1);
+	signal(SIGUSR2, x2j_handle_signal_SIGUSR2);
 
 	SYSLOG(LOG_NOTICE, "Running.");
 
@@ -129,173 +150,133 @@ int main(int argc, char* argv[]) {
 				/* ----------------  Player 1 controls ------------------- */
 				/* buttons */
 				case KEY_LEFTCTRL:
-					uinput_gpad_write(&uinp_gpads[0], BTN_A,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_A, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD1);
 					break;
 				case KEY_LEFTALT:
-					uinput_gpad_write(&uinp_gpads[0], BTN_B,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_B, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD1);
 					break;
 				case KEY_SPACE:
-					uinput_gpad_write(&uinp_gpads[0], BTN_C,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_C, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD1);
 					break;
 				case KEY_LEFTSHIFT:
-					uinput_gpad_write(&uinp_gpads[0], BTN_X,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_X, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD1);
 					break;
 				case KEY_Z:
-					uinput_gpad_write(&uinp_gpads[0], BTN_Y,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_Y, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD1);
 					break;
 				case KEY_X:
-					uinput_gpad_write(&uinp_gpads[0], BTN_Z,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_Z, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD1);
 					break;
 				case KEY_C:
-					uinput_gpad_write(&uinp_gpads[0], BTN_TL,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_TL, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD1);
 					break;
 				case KEY_5:
-					uinput_gpad_write(&uinp_gpads[0], BTN_TR,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_TR, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD1);
 					break;
-/* 2018-01-28 Adam Macielinski - if KEY_1 and KEY_3 are pressed together, then write KEY_ESC */
 				case KEY_1:
                                         if (keyStates[KEY_3] && xarcdev.ev[ctr].value) {
-                                                uinput_kbd_write(&uinp_kbd, KEY_ESC, 1, EV_KEY);
-                                                uinput_kbd_sleep();
-                                                uinput_kbd_write(&uinp_kbd, KEY_ESC, 0, EV_KEY);
+                                                x2j_write_keyboard(KEY_ESC);
                                                 combo = 2;
                                                 continue;
                                         }
                                         /* it's a key down, ignore */
                                         if (xarcdev.ev[ctr].value)
                                                 continue;
-                                        if (!combo) {
-                                                uinput_gpad_write(&uinp_gpads[1], BTN_START, 1, EV_KEY);
-                                                uinput_gpad_sleep();
-                                                uinput_gpad_write(&uinp_gpads[1], BTN_START, 0, EV_KEY);
-                                        } else
+                                        if (!combo)
+	                                        x2j_write_gpad(BTN_START, GPAD1);
+                                        else
                                                 combo--;
                                         break;
-/* 2018-01-28 Adam Macielinski - only if KEY_3 is not pressed together with another key do we treat as BTN_SELECT */
 				case KEY_3:
                                         /* it's a key down, ignore */
                                         if (xarcdev.ev[ctr].value)
                                                 continue;
-                                        if (!combo) {
-                                                uinput_gpad_write(&uinp_gpads[1], BTN_SELECT, 1, EV_KEY);
-                                                uinput_gpad_sleep();
-                                                uinput_gpad_write(&uinp_gpads[1], BTN_SELECT, 0, EV_KEY);
-                                        } else
+                                        if (!combo)
+	                                        x2j_write_gpad(BTN_SELECT, GPAD1);
+                                        else
                                                 combo--;
-
                                         break;
 				case KEY_KP4:
 				case KEY_LEFT:
-					uinput_gpad_write(&uinp_gpads[0], ABS_X,
-							xarcdev.ev[ctr].value == 0 ? 2 : 0, EV_ABS); // center or left
+					x2j_write(xarcdev.ev[ctr].code, ABS_X, xarcdev.ev[ctr].value == 0 ? 2 : 0, EV_ABS, GPAD1); // center or left
 					break;
 				case KEY_KP6:
 				case KEY_RIGHT:
-					uinput_gpad_write(&uinp_gpads[0], ABS_X,
-							xarcdev.ev[ctr].value == 0 ? 2 : 4, EV_ABS); // center or right
+					x2j_write(xarcdev.ev[ctr].code, ABS_X, xarcdev.ev[ctr].value == 0 ? 2 : 4, EV_ABS, GPAD1); // center or right
 					break;
 				case KEY_KP8:
 				case KEY_UP:
-					uinput_gpad_write(&uinp_gpads[0], ABS_Y,
-							xarcdev.ev[ctr].value == 0 ? 2 : 0, EV_ABS); // center or up
+					x2j_write(xarcdev.ev[ctr].code, ABS_Y, xarcdev.ev[ctr].value == 0 ? 2 : 0, EV_ABS, GPAD1); // center or up
 					break;
 				case KEY_KP2:
 				case KEY_DOWN:
-					uinput_gpad_write(&uinp_gpads[0], ABS_Y,
-							xarcdev.ev[ctr].value == 0 ? 2 : 4, EV_ABS); // center or down
+					x2j_write(xarcdev.ev[ctr].code, ABS_Y, xarcdev.ev[ctr].value == 0 ? 2 : 4, EV_ABS, GPAD1); // center or down
 					break;
 
 					/* ----------------  Player 2 controls ------------------- */
 					/* buttons */
 				case KEY_A:
-					uinput_gpad_write(&uinp_gpads[1], BTN_A,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_A, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD2);
 					break;
 				case KEY_S:
-					uinput_gpad_write(&uinp_gpads[1], BTN_B,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_B, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD2);
 					break;
 				case KEY_Q:
-					uinput_gpad_write(&uinp_gpads[1], BTN_C,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_C, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD2);
 					break;
 				case KEY_W:
-					uinput_gpad_write(&uinp_gpads[1], BTN_X,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_X, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD2);
 					break;
 				case KEY_E:
-					uinput_gpad_write(&uinp_gpads[1], BTN_Y,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_Y, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD2);
 					break;
 				case KEY_LEFTBRACE:
- 					uinput_gpad_write(&uinp_gpads[1], BTN_Z,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+ 					x2j_write(xarcdev.ev[ctr].code, BTN_Z, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD2);
 					break;
 				case KEY_RIGHTBRACE:
-					uinput_gpad_write(&uinp_gpads[1], BTN_TL,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_TL, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD2);
 					break;
 				case KEY_6:
-					uinput_gpad_write(&uinp_gpads[1], BTN_TR,
-							xarcdev.ev[ctr].value > 0, EV_KEY);
+					x2j_write(xarcdev.ev[ctr].code, BTN_TR, xarcdev.ev[ctr].value > 0, EV_KEY, GPAD2);
 					break;
 /* 2018-01-28 Adam Macielinski - if KEY_2 and KEY_4 are pressed together, then write KEY_ESC */
 				case KEY_2:
 					/* handle combination */
 					if (keyStates[KEY_4] && xarcdev.ev[ctr].value) {
-						uinput_kbd_write(&uinp_kbd, KEY_ESC, 1, EV_KEY);
-						uinput_kbd_sleep();
-						uinput_kbd_write(&uinp_kbd, KEY_ESC, 0, EV_KEY);
+						x2j_write_keyboard(KEY_ESC);
 						combo = 2;
 						continue;
 					}
 					/* it's a key down, ignore */
 					if (xarcdev.ev[ctr].value)
 						continue;
-					if (!combo) {
-						uinput_gpad_write(&uinp_gpads[1], BTN_START, 1, EV_KEY);
-						uinput_gpad_sleep();
-						uinput_gpad_write(&uinp_gpads[1], BTN_START, 0, EV_KEY);
-					} else
+					if (!combo)
+						x2j_write_gpad(BTN_START, GPAD2);
+					else
 						combo--;
 					break;
 				case KEY_4:
 					/* it's a key down, ignore */
 					if (xarcdev.ev[ctr].value)
 						continue;
-					if (!combo) {
-						uinput_gpad_write(&uinp_gpads[1], BTN_SELECT, 1, EV_KEY);
-						uinput_gpad_sleep();
-						uinput_gpad_write(&uinp_gpads[1], BTN_SELECT, 0, EV_KEY);
-					} else
+					if (!combo)
+						x2j_write_gpad(BTN_SELECT, GPAD2);
+					else
 						combo--;
-
 					break;
 
 					/* joystick */
 				case KEY_D:
-					uinput_gpad_write(&uinp_gpads[1], ABS_X,
-							xarcdev.ev[ctr].value == 0 ? 2 : 0, EV_ABS); // center or left
+					x2j_write(xarcdev.ev[ctr].code, ABS_X, xarcdev.ev[ctr].value == 0 ? 2 : 0, EV_ABS, GPAD2); // center or left
 					break;
 				case KEY_G:
-					uinput_gpad_write(&uinp_gpads[1], ABS_X,
-							xarcdev.ev[ctr].value == 0 ? 2 : 4, EV_ABS); // center or right
+					x2j_write(xarcdev.ev[ctr].code, ABS_X, xarcdev.ev[ctr].value == 0 ? 2 : 4, EV_ABS, GPAD2); // center or right
 					break;
 				case KEY_R:
-					uinput_gpad_write(&uinp_gpads[1], ABS_Y,
-							xarcdev.ev[ctr].value == 0 ? 2 : 0, EV_ABS); // center or up
+					x2j_write(xarcdev.ev[ctr].code, ABS_Y, xarcdev.ev[ctr].value == 0 ? 2 : 0, EV_ABS, GPAD2); // center or up
 					break;
 				case KEY_F:
-					uinput_gpad_write(&uinp_gpads[1], ABS_Y,
-							xarcdev.ev[ctr].value == 0 ? 2 : 4, EV_ABS); // center or down
+					x2j_write(xarcdev.ev[ctr].code, ABS_Y, xarcdev.ev[ctr].value == 0 ? 2 : 4, EV_ABS, GPAD2); // center or down
 					break;
 
 				default:
@@ -312,7 +293,7 @@ int main(int argc, char* argv[]) {
 static void teardown() {
 	printf("Exiting.\n");
 	SYSLOG(LOG_NOTICE, "Exiting.");
-	
+
 	input_xarcade_close(&xarcdev);
 	uinput_gpad_close(&uinp_gpads[0]);
 	uinput_gpad_close(&uinp_gpads[1]);
@@ -327,3 +308,37 @@ static void signal_handler(int signum) {
 	teardown();
 	exit(EXIT_SUCCESS);
 }
+
+/* For most X-Arade keys:
+   If we're using MAME, then just simulate whatever the X-Arcade would normally have provided.
+   Otherwise, map to a gamepad button.
+*/
+static void x2j_write(int keypressed, int mappedkey, int option, int eventtype, int gpad) {
+	if (mame) {
+		// If we are using MAME, then pass through whatever X-Arcade is sending, without mapping.
+		uinput_kbd_write(&uinp_kbd, keypressed, option, eventtype);
+	} else {
+		// Otherwise, map X-Arcade to a gamepad key.
+		uinput_gpad_write(&uinp_gpads[gpad], mappedkey, option, eventtype); }
+}
+
+static void x2j_write_keyboard(int keytopress) {
+	uinput_kbd_write(&uinp_kbd, keytopress, 1, EV_KEY);
+	uinput_kbd_sleep();
+	uinput_kbd_write(&uinp_kbd, keytopress, 0, EV_KEY);
+}
+
+static void x2j_write_gpad(int keytopress, int gpad) {
+	uinput_gpad_write(&uinp_gpads[gpad], keytopress, 1, EV_KEY);
+	uinput_gpad_sleep();
+	uinput_gpad_write(&uinp_gpads[gpad], keytopress, 0, EV_KEY);
+}
+
+static void x2j_handle_signal_SIGUSR1(int signum) {
+	mame = 0;
+}
+
+static void x2j_handle_signal_SIGUSR2(int signum) {
+	mame = 1;
+}
+

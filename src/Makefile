@@ -4,7 +4,7 @@ SRCDIR=.
 BUILDDIR=../build
 CFLAGS=-c -Wall -O3
 LIBS=
-TARGET := xarcade2jstick
+TARGET := xarcade2jstickESC
 SRCEXT := c
 SOURCES := $(shell find $(SRCDIR) -type f -name "*.$(SRCEXT)")
 OBJECTS := $(patsubst $(SRCDIR)/%,$(BUILDDIR)/%,$(SOURCES:.$(SRCEXT)=.o))
